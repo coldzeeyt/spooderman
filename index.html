@@ -146,7 +146,7 @@
 <div id="title">
   <div class="card">
     <h1>SPOODERMAN</h1>
-    <div class="sub">pre-alpha build 0.2.0 &mdash; art in progress</div>
+    <div class="sub">pre-alpha build 0.3.0 &mdash; art in progress</div>
     <ul id="howto"></ul>
     <div class="note">No objective yet. Just swing around. Turn your sound on.</div>
     <button id="start">START (it's unfinished)</button>
@@ -1172,8 +1172,7 @@ function flash(text, secs = 2) {
 // ------------------------------------------------------------------
 const FAST = /fast/.test(location.search);  // ?fast = short timers for testing
 const CALM = FAST ? 6 : 120;    // seconds of normal city each loop
-const DARKEN = FAST ? 10 : 60;  // how long the city takes to go fully dark
-let loopT = 0, loopN = 1, corruption = 0, spreadT = 0, scareT = -1, wasGrounded = true, warned = false;
+let loopT = 0, loopN = 1, corruption = 0, scareT = -1, wasGrounded = true, warned = false;
 const purpleSet = new Set();
 
 const fogBase = new THREE.Color(HORIZON), fogDark = new THREE.Color(0x231030);
@@ -1204,23 +1203,25 @@ function applyCorruption(c) {
   for (const n of npcs) n.tag.material.map = c > 0.3 ? creepyTag : n.normalTag;
 }
 
-function spreadPurple() {
-  const free = purpleBuildings.filter(p => !purpleSet.has(p.bid));
-  if (!free.length) return;
-  // favour buildings near the player so you see it happen
-  free.sort((a, b) => a.center.distanceToSquared(pos) - b.center.distanceToSquared(pos));
-  const pick = free[Math.floor(Math.random() * Math.min(free.length, 6))];
-  purpleSet.add(pick.bid);
-  pick.flicker = 0.8;
-  pick.mesh.visible = true;
+function turnAllPurple(withFlicker) {
+  for (const p of purpleBuildings) {
+    purpleSet.add(p.bid);
+    p.mesh.visible = true;
+    p.flicker = withFlicker ? 0.7 + Math.random() * 0.5 : 0;
+  }
+  corruption = 1;
+  applyCorruption(1);
 }
 
 // --- audio (made on the fly, no files) ---
-let actx = null, droneGain = null;
+let actx = null, droneGain = null, master = null;
 function initAudio() {
   if (actx) return;
   try {
     actx = new (window.AudioContext || window.webkitAudioContext)();
+    master = actx.createDynamicsCompressor();
+    master.threshold.value = -10; master.ratio.value = 4;
+    master.connect(actx.destination);
     droneGain = actx.createGain();
     droneGain.gain.value = 0;
     const lp = actx.createBiquadFilter();
@@ -1231,121 +1232,249 @@ function initAudio() {
       o.connect(lp); o.start();
     }
     lp.connect(droneGain);
-    droneGain.connect(actx.destination);
+    droneGain.connect(master);
   } catch (e) { actx = null; }
 }
 function setDrone(v) {
-  if (actx) droneGain.gain.setTargetAtTime(v, actx.currentTime, 0.3);
+  if (actx) droneGain.gain.setTargetAtTime(v, actx.currentTime, v ? 0.3 : 0.02);
 }
-function screech() {
+function boom(t, vol = 1) {
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(140, t);
+  o.frequency.exponentialRampToValueAtTime(32, t + 0.6);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
+  o.connect(g); g.connect(master);
+  o.start(t); o.stop(t + 1);
+}
+function noiseBuf(secs) {
+  const buf = actx.createBuffer(1, actx.sampleRate * secs, actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  return buf;
+}
+function thump() { if (actx) boom(actx.currentTime, 0.9); }
+function scream() {
   if (!actx) return;
-  const t = actx.currentTime;
+  const t = actx.currentTime, END = 2.2;
+  boom(t, 1.2);
   const out = actx.createGain();
   out.gain.setValueAtTime(0.0001, t);
-  out.gain.exponentialRampToValueAtTime(0.85, t + 0.02);
-  out.gain.setValueAtTime(0.85, t + 1.1);
-  out.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+  out.gain.exponentialRampToValueAtTime(1.0, t + 0.015);
+  out.gain.setValueAtTime(1.0, t + END - 0.5);
+  out.gain.exponentialRampToValueAtTime(0.0001, t + END);
   const shaper = actx.createWaveShaper();
   const curve = new Float32Array(1024);
-  for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; curve[i] = (61 * x) / (1 + 60 * Math.abs(x)); }
+  for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; curve[i] = (81 * x) / (1 + 80 * Math.abs(x)); }
   shaper.curve = curve;
-  shaper.connect(out);
-  out.connect(actx.destination);
-  const buf = actx.createBuffer(1, actx.sampleRate * 1.5, actx.sampleRate);
-  const data = buf.getChannelData(0);
-  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.5;
-  const n = actx.createBufferSource(); n.buffer = buf; n.connect(shaper); n.start(t);
-  for (const [f0, f1, type] of [[1400, 180, 'sawtooth'], [1460, 240, 'square'], [90, 40, 'sawtooth']]) {
+  shaper.connect(out); out.connect(master);
+
+  // a "voice": buzzy source through vowel-ish formant filters, with a shaky vibrato
+  const formants = [800, 1150, 2900].map(f => {
+    const bp = actx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = 6;
+    bp.connect(shaper);
+    return bp;
+  });
+  for (const base of [520, 547, 760]) {
     const o = actx.createOscillator();
-    o.type = type;
-    o.frequency.setValueAtTime(f0, t);
-    o.frequency.exponentialRampToValueAtTime(f1, t + 1.4);
-    o.connect(shaper); o.start(t); o.stop(t + 1.5);
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(base, t);
+    o.frequency.linearRampToValueAtTime(base * 1.35, t + 0.5);
+    o.frequency.linearRampToValueAtTime(base * 0.8, t + END);
+    const lfo = actx.createOscillator(), lg = actx.createGain();
+    lfo.frequency.value = 9 + Math.random() * 4; lg.gain.value = base * 0.08;
+    lfo.connect(lg); lg.connect(o.frequency);
+    for (const f of formants) o.connect(f);
+    o.connect(shaper);
+    o.start(t); lfo.start(t); o.stop(t + END); lfo.stop(t + END);
   }
+  // hiss + metal scrape
+  const n = actx.createBufferSource(); n.buffer = noiseBuf(END);
+  const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1800;
+  n.connect(hp); hp.connect(shaper); n.start(t);
+  const m = actx.createOscillator(); m.type = 'square';
+  m.frequency.setValueAtTime(1700, t); m.frequency.exponentialRampToValueAtTime(3100, t + END);
+  const mg = actx.createGain(); mg.gain.value = 0.3;
+  m.connect(mg); mg.connect(shaper); m.start(t); m.stop(t + END);
 }
 
-// --- the face ---
+// --- the face: a torn-open, wrong version of his own mask ---
 const scareCv = document.getElementById('scare');
 const blackout = document.getElementById('blackout');
-function drawScare(k) {
-  const W = scareCv.width = innerWidth, H = scareCv.height = innerHeight;
-  const g = scareCv.getContext('2d');
-  g.fillStyle = Math.random() < 0.12 ? '#fff' : '#000';
-  g.fillRect(0, 0, W, H);
-  const glow = g.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
-  glow.addColorStop(0, 'rgba(140,0,30,0.7)'); glow.addColorStop(1, 'rgba(0,0,0,0)');
-  g.fillStyle = glow; g.fillRect(0, 0, W, H);
+const faceCv = document.createElement('canvas');
+const WORDS = ['LOOK AT ME', 'YOU LANDED', 'STAY', 'AGAIN', 'NO WAY OUT'];
 
-  const lunge = 0.55 + Math.pow(k, 0.5) * 0.85;
-  const s = Math.min(W, H) * lunge / 420;
-  const sh = 12 + k * 40;
-  g.save();
-  g.translate(W / 2 + (Math.random() - 0.5) * sh, H / 2 + (Math.random() - 0.5) * sh);
-  g.rotate((Math.random() - 0.5) * 0.1);
-  g.scale(s * (1 + (Math.random() - 0.5) * 0.06), s);
+function maskPath(g) { g.beginPath(); g.ellipse(0, 0, 165, 215, 0, 0, Math.PI * 2); }
+function drawFace(g, k, alt) {
+  // dark hair / shadow around the head
+  g.fillStyle = '#000';
+  g.beginPath(); g.ellipse(0, -10, 205, 250, 0, 0, Math.PI * 2); g.fill();
 
-  // head
-  const skin = g.createRadialGradient(0, -20, 20, 0, 0, 230);
-  skin.addColorStop(0, '#d9dccb'); skin.addColorStop(0.7, '#8c9282'); skin.addColorStop(1, '#2b2e27');
+  // mask
+  const skin = g.createRadialGradient(-30, -60, 20, 0, 0, 240);
+  skin.addColorStop(0, '#b0141c'); skin.addColorStop(0.6, '#6a070d'); skin.addColorStop(1, '#1a0003');
   g.fillStyle = skin;
-  g.beginPath(); g.ellipse(0, 0, 150, 205, 0, 0, Math.PI * 2); g.fill();
-  // sockets
-  for (const sx of [-1, 1]) {
-    const sock = g.createRadialGradient(sx * 62, -55, 5, sx * 62, -55, 80);
-    sock.addColorStop(0, '#000'); sock.addColorStop(0.6, '#000'); sock.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = sock;
-    g.beginPath(); g.ellipse(sx * 62, -55, 70, 78, sx * 0.2, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#fff';
-    g.beginPath(); g.arc(sx * 58 + (Math.random() - 0.5) * 6, -50 + (Math.random() - 0.5) * 6, 5, 0, Math.PI * 2); g.fill();
-    // bleeding
-    g.strokeStyle = '#5a0000'; g.lineWidth = 6;
-    g.beginPath(); g.moveTo(sx * 60, -10); g.lineTo(sx * 64 + sx * 4, 40 + k * 60); g.stroke();
+  maskPath(g); g.fill();
+
+  // web lines, clipped to the mask
+  g.save();
+  maskPath(g); g.clip();
+  g.strokeStyle = 'rgba(0,0,0,0.65)'; g.lineWidth = 3;
+  const cx = 0, cy = -10, rays = 16;
+  for (let i = 0; i < rays; i++) {
+    const a = (i / rays) * Math.PI * 2;
+    g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * 300, cy + Math.sin(a) * 300); g.stroke();
   }
-  // mouth, opening wider as it lunges
-  const mo = 70 + k * 40 + Math.random() * 10;
-  g.fillStyle = '#050000';
-  g.beginPath(); g.ellipse(0, 95, 62, mo, 0, 0, Math.PI * 2); g.fill();
-  g.fillStyle = '#e8e2c8';
-  for (let i = -5; i <= 5; i++) {
-    const x = i * 11;
-    const top = 95 - mo * Math.sqrt(Math.max(0, 1 - (x / 62) ** 2));
-    const bot = 95 + mo * Math.sqrt(Math.max(0, 1 - (x / 62) ** 2));
-    g.beginPath(); g.moveTo(x - 5, top); g.lineTo(x + 5, top); g.lineTo(x, top + 22); g.fill();
-    g.beginPath(); g.moveTo(x - 5, bot); g.lineTo(x + 5, bot); g.lineTo(x, bot - 22); g.fill();
-  }
-  // cracks
-  g.strokeStyle = 'rgba(30,10,10,0.7)'; g.lineWidth = 3;
-  for (let i = 0; i < 6; i++) {
-    g.beginPath(); let x = (Math.random() - 0.5) * 200, y = -200 + Math.random() * 60; g.moveTo(x, y);
-    for (let j = 0; j < 5; j++) { x += (Math.random() - 0.5) * 50; y += 25; g.lineTo(x, y); }
+  for (const r of [45, 90, 140, 195, 250]) {
+    g.beginPath();
+    for (let i = 0; i <= rays; i++) {
+      const a = (i / rays) * Math.PI * 2, a0 = ((i - 0.5) / rays) * Math.PI * 2;
+      const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      if (i === 0) g.moveTo(x, y);
+      else g.quadraticCurveTo(cx + Math.cos(a0) * r * 0.85, cy + Math.sin(a0) * r * 0.85, x, y);
+    }
     g.stroke();
   }
   g.restore();
-  // static
-  for (let i = 0; i < 260; i++) {
-    g.fillStyle = `rgba(255,255,255,${Math.random() * 0.25})`;
-    g.fillRect(Math.random() * W, Math.random() * H, 2 + Math.random() * 60, 2);
+
+  // eyes: stretched, dripping
+  for (const sx of [-1, 1]) {
+    g.beginPath();
+    g.moveTo(sx * 16, -12);
+    g.quadraticCurveTo(sx * 35, -135, sx * 140, -125);
+    g.quadraticCurveTo(sx * 128, -10, sx * 16, -12);
+    g.lineWidth = 20; g.strokeStyle = '#000'; g.stroke();
+    g.fillStyle = alt ? '#000' : '#e9e6dc'; g.fill();
+    // pupils
+    const px = sx * 72 + (Math.random() - 0.5) * 8, py = -70 + (Math.random() - 0.5) * 8;
+    const glow = g.createRadialGradient(px, py, 0, px, py, 22);
+    glow.addColorStop(0, '#fff'); glow.addColorStop(0.25, '#ff1a1a'); glow.addColorStop(1, 'rgba(255,0,0,0)');
+    g.fillStyle = glow; g.beginPath(); g.arc(px, py, 22, 0, Math.PI * 2); g.fill();
+    // drips
+    g.strokeStyle = '#120000'; g.lineCap = 'round';
+    for (let d = 0; d < 3; d++) {
+      const x = sx * (40 + d * 30);
+      g.lineWidth = 7 - d * 2;
+      g.beginPath(); g.moveTo(x, -20); g.lineTo(x + sx * 3, 10 + k * (90 + d * 40)); g.stroke();
+    }
+  }
+
+  // mouth: a ripped gash that keeps opening
+  const my = 105 + k * 25, rx = 80 + k * 15, ry = 60 + k * 80;
+  g.beginPath();
+  const pts = 34;
+  for (let i = 0; i <= pts; i++) {
+    const a = (i / pts) * Math.PI * 2;
+    const j = 0.86 + 0.14 * Math.abs(Math.sin(i * 7.3));
+    const x = Math.cos(a) * rx * j, y = my + Math.sin(a) * ry * j;
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  }
+  const throat = g.createRadialGradient(0, my, 5, 0, my, ry);
+  throat.addColorStop(0, '#000'); throat.addColorStop(0.7, '#0a0000'); throat.addColorStop(1, '#3a0006');
+  g.fillStyle = throat; g.fill();
+  g.strokeStyle = '#2a0004'; g.lineWidth = 6; g.stroke();
+  // needle teeth
+  g.fillStyle = '#e4dcc0';
+  for (let i = -7; i <= 7; i++) {
+    const x = i * (rx / 8);
+    const e = Math.sqrt(Math.max(0, 1 - (x / rx) ** 2)) * ry * 0.92;
+    const len = 26 + 22 * Math.abs(Math.sin(i * 3.1));
+    g.beginPath(); g.moveTo(x - 5, my - e); g.lineTo(x + 5, my - e); g.lineTo(x + Math.sin(i) * 3, my - e + len); g.fill();
+    g.beginPath(); g.moveTo(x - 5, my + e); g.lineTo(x + 5, my + e); g.lineTo(x - Math.sin(i) * 3, my + e - len * 0.9); g.fill();
+  }
+  // tears in the mask at the corners of the mouth
+  g.strokeStyle = '#000'; g.lineWidth = 5;
+  for (const sx of [-1, 1]) {
+    g.beginPath(); g.moveTo(sx * rx * 0.9, my);
+    g.lineTo(sx * (rx + 25), my - 20); g.lineTo(sx * (rx + 45), my - 5); g.lineTo(sx * (rx + 70), my - 30);
+    g.stroke();
   }
 }
 
+let scareFrame = 0;
+function drawScare(k) {
+  const W = innerWidth, H = innerHeight;
+  if (scareCv.width !== W || scareCv.height !== H) { scareCv.width = faceCv.width = W; scareCv.height = faceCv.height = H; }
+  const g = scareCv.getContext('2d'), f = faceCv.getContext('2d');
+  scareFrame++;
+
+  // slam in fast, then keep creeping closer
+  const slam = Math.min(1, k / 0.06);
+  const lunge = 0.25 + slam * 0.95 + k * 0.45;
+  const s = Math.min(W, H) * lunge / 430;
+  const shake = 6 + k * 30 + (k < 0.1 ? 40 : 0);
+
+  f.setTransform(1, 0, 0, 1, 0, 0);
+  f.fillStyle = '#000'; f.fillRect(0, 0, W, H);
+  const glow = f.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
+  glow.addColorStop(0, 'rgba(120,0,20,0.8)'); glow.addColorStop(1, 'rgba(0,0,0,0)');
+  f.fillStyle = glow; f.fillRect(0, 0, W, H);
+  f.translate(W / 2 + (Math.random() - 0.5) * shake, H / 2 + (Math.random() - 0.5) * shake + 20);
+  f.rotate((Math.random() - 0.5) * 0.12);
+  f.scale(s * (1 + (Math.random() - 0.5) * 0.08), s);
+  drawFace(f, k, Math.floor(scareFrame / 3) % 4 === 3);
+
+  // compose: red/cyan split for that broken-video look
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+  g.drawImage(faceCv, 0, 0);
+  const split = 6 + k * 18;
+  g.globalCompositeOperation = 'lighter';
+  g.globalAlpha = 0.35;
+  g.drawImage(faceCv, split, 0);
+  g.drawImage(faceCv, -split, 2);
+  g.globalAlpha = 1;
+  g.globalCompositeOperation = 'source-over';
+
+  // torn horizontal strips
+  for (let i = 0; i < 7; i++) {
+    const y = Math.random() * H, h = 4 + Math.random() * 40, dx = (Math.random() - 0.5) * 120;
+    g.drawImage(faceCv, 0, y, W, h, dx, y, W, h);
+  }
+  // inverted flash frames
+  if (Math.random() < 0.08 || k < 0.03) {
+    g.globalCompositeOperation = 'difference';
+    g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+    g.globalCompositeOperation = 'source-over';
+  }
+  // single-frame words
+  if (Math.random() < 0.12) {
+    g.fillStyle = '#ff1a1a';
+    g.font = `bold ${Math.floor(Math.min(W, H) * 0.16)}px Courier New, monospace`;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(WORDS[Math.floor(Math.random() * WORDS.length)], W / 2 + (Math.random() - 0.5) * 60, H * (0.2 + Math.random() * 0.6));
+  }
+  // static + scanlines
+  for (let i = 0; i < 300; i++) {
+    g.fillStyle = `rgba(255,255,255,${Math.random() * 0.22})`;
+    g.fillRect(Math.random() * W, Math.random() * H, 2 + Math.random() * 70, 2);
+  }
+  g.fillStyle = 'rgba(0,0,0,0.25)';
+  for (let y = 0; y < H; y += 4) g.fillRect(0, y, W, 2);
+  scareCv.style.transform = `translate(${(Math.random() - 0.5) * shake * 0.4}px, ${(Math.random() - 0.5) * shake * 0.4}px)`;
+}
+
+// timeline (seconds since landing)
+const PRE = 0.55, FACE = 2.2, RESET = PRE + FACE, LOOPTXT = RESET + 0.9, RESUME = RESET + 2.2, DONE = RESUME + 1.4;
 function startScare() {
   scareT = 0;
   playing = false;
   setWeb('L', false); setWeb('R', false);
   input.x = input.y = 0;
-  setDrone(0);
-  screech();
-  try { navigator.vibrate?.([300, 80, 500]); } catch (e) {}
-  scareCv.style.display = 'block';
+  setDrone(0); // dead silence first
 }
 function resetLoop() {
   loopN++;
-  loopT = 0; spreadT = 0; corruption = 0; warned = false;
+  loopT = 0; corruption = 0; warned = false;
   for (const p of purpleBuildings) p.mesh.visible = false;
   purpleSet.clear();
   applyCorruption(0);
+  // from the second loop on, it's purple from the start
+  if (loopN >= 2) { turnAllPurple(false); warned = true; }
   pos.set(0, 0, 8); vel.set(0, 0, 0);
-  yaw = 0; pitch = 0.25; facing = Math.PI;
+  yaw = 0; pitch = firstPerson ? 0 : 0.25; facing = Math.PI;
   for (const s of ['L', 'R']) { webs[s].state = 'idle'; webs[s].held = false; }
   camTarget.set(0, 1.6, 8);
 }
@@ -1354,8 +1483,15 @@ function updateLoop(dt) {
   if (scareT >= 0) {
     const before = scareT;
     scareT += dt;
-    if (scareT < 1.5) drawScare(scareT / 1.5);
-    if (before < 1.5 && scareT >= 1.5) {
+    const at = x => before < x && scareT >= x;
+    if (scareT < PRE) {
+      // the lights stutter in the silence
+      sun.intensity = Math.random() < 0.5 ? 0 : 0.5;
+      hemi.intensity = Math.random() < 0.5 ? 0.02 : 0.15;
+    }
+    if (at(PRE)) { scareCv.style.display = 'block'; scream(); try { navigator.vibrate?.([400, 60, 400, 60, 800]); } catch (e) {} }
+    if (scareT >= PRE && scareT < RESET) drawScare((scareT - PRE) / FACE);
+    if (at(RESET)) {
       scareCv.style.display = 'none';
       blackout.textContent = '';
       blackout.style.transition = 'none';
@@ -1363,31 +1499,28 @@ function updateLoop(dt) {
       blackout.style.display = 'flex';
       resetLoop();
     }
-    if (before < 2.3 && scareT >= 2.3) blackout.textContent = `LOOP ${loopN}`;
-    if (before < 3.6 && scareT >= 3.6) {
+    if (at(LOOPTXT)) blackout.textContent = `LOOP ${loopN}`;
+    if (at(RESUME)) {
       blackout.style.transition = 'opacity 1.2s';
       blackout.style.opacity = 0;
       playing = true;
       last = performance.now();
       flash(loopN === 2 ? 'wait... this already happened' : 'again.', 3);
     }
-    if (scareT >= 5) { blackout.style.display = 'none'; scareT = -1; }
+    if (scareT >= DONE) { blackout.style.display = 'none'; scareT = -1; }
     return;
   }
   if (!playing) return;
 
   loopT += dt;
-  if (loopT > CALM) {
-    if (!warned) { warned = true; flash(loopN > 1 ? 'it\'s starting' : '...', 2.5); }
-    corruption = Math.min(1, (loopT - CALM) / DARKEN);
-    spreadT -= dt;
-    if (spreadT <= 0) {
-      spreadPurple();
-      spreadT = Math.max(1.2, 4.5 - (loopT - CALM) / 20);
-    }
-    applyCorruption(corruption);
-    setDrone(corruption * 0.12);
+  if (loopT > CALM && !warned) {
+    // everything turns at once
+    warned = true;
+    turnAllPurple(true);
+    thump();
+    flash('...', 2.5);
   }
+  setDrone(corruption * 0.12);
 
   for (const p of purpleBuildings) {
     if (p.flicker > 0) { p.flicker -= dt; p.mesh.visible = p.flicker <= 0 || Math.random() < 0.55; }
@@ -1460,7 +1593,7 @@ function frame(now) {
     const glitch = corruption > 0.4 && Math.random() < corruption * 0.3;
     const st = glitch ? 'DON\'T LAND' : info.attached ? 'SWINGING' : info.climbing ? 'climbing' : onGround ? 'grounded' : 'airborne';
     hud.innerHTML =
-      `<b>SPOODERMAN</b> v0.2.0-prealpha\n` +
+      `<b>SPOODERMAN</b> v0.3.0-prealpha\n` +
       (loopN > 1 ? `loop: ${loopN}\n` : '') +
       `spd: ${vel.length().toFixed(1)}  alt: ${pos.y.toFixed(0)}m\n` +
       `state: ${st}\n` +
