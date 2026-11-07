@@ -16,4 +16,3 @@ A janky little 3D web-swinging game. Pre-alpha. Art is placeholder on purpose.
 
 - Let go of a web to fling yourself forward.
 - Run into a wall to climb it.
-- Collect the 12 pink `?` cubes on the rooftops. There is no ending yet.

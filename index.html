@@ -134,7 +134,7 @@
     <h1>SPOODERMAN</h1>
     <div class="sub">pre-alpha build 0.0.7 &mdash; art not final (art not started)</div>
     <ul id="howto"></ul>
-    <div class="note">Goal: grab all the pink "?" cubes on the rooftops. There is no ending yet.</div>
+    <div class="note">No objective yet. Just swing around.</div>
     <button id="start">START (it's unfinished)</button>
   </div>
 </div>
@@ -335,22 +335,6 @@ for (let i = 0; i < 14; i++) {
   const pole = new THREE.Mesh(boxGeo, new THREE.MeshLambertMaterial({ color: 0x444444 }));
   pole.scale.set(.6, 6, .6); pole.position.set(0, 3, -24); scene.add(pole);
 }
-
-// ------------------------------------------------------------------
-// collectibles
-// ------------------------------------------------------------------
-const cubes = [];
-{
-  const picks = [...buildings].sort(() => rand() - 0.5).slice(0, 12);
-  const mat = new THREE.MeshBasicMaterial({ map: labelTex('?', '#ff2bd6', '#000') });
-  for (const b of picks) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.4, 1.4), mat);
-    m.position.set(b.cx, b.top + 1.6, b.cz);
-    scene.add(m);
-    cubes.push(m);
-  }
-}
-let collected = 0;
 
 // ------------------------------------------------------------------
 // player model (boxes. lots of boxes.)
@@ -854,18 +838,6 @@ function frame(now) {
   updateWeb('L', dt);
   updateWeb('R', dt);
 
-  // collectibles
-  for (const c of cubes) {
-    if (!c.visible) continue;
-    c.rotation.y += dt * 2; c.rotation.x += dt;
-    if (c.position.distanceTo(tmp.copy(pos).setY(pos.y + 1)) < 2.4) {
-      c.visible = false;
-      collected++;
-      if (collected === cubes.length) flash('ALL CUBES! you win\n(ending not implemented)', 5);
-      else flash(`cube get! ${collected}/${cubes.length}`);
-    }
-  }
-
   updateCamera(dt);
   renderer.render(scene, camera);
 
@@ -877,7 +849,6 @@ function frame(now) {
     const st = info.attached ? 'SWINGING' : info.climbing ? 'climbing' : onGround ? 'grounded' : 'airborne';
     hud.innerHTML =
       `<b>SPOODERMAN</b> v0.0.7-prealpha\n` +
-      `cubes: ${collected}/${cubes.length}\n` +
       `spd: ${vel.length().toFixed(1)}  alt: ${pos.y.toFixed(0)}m\n` +
       `state: ${st}\n` +
       `fps: ${fps}  // debug text pls remove`;
