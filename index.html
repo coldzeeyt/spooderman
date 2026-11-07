@@ -88,6 +88,12 @@
     display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 13px;
     box-shadow: 4px 4px 0 rgba(0,0,0,.35);
   }
+  #view {
+    position: fixed; top: max(10px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right));
+    width: 64px; height: 44px; border-radius: 10px; border: 3px solid #ddd; background: #3a3a3a;
+    display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;
+  }
+  body.fp #crosshair { top: 50%; }
   #jump.on { background: #ffe14d; color: #000; }
   @media (max-height: 420px) {
     #mouse { width: 130px; height: 150px; }
@@ -128,6 +134,7 @@
   <div id="joyBase"><div id="joyKnob"></div></div>
   <div id="joyHint">drag left side = move<br>drag anywhere else = look</div>
   <div id="jump">JUMP</div>
+  <div id="view">1ST</div>
   <div id="mouse">
     <div class="btn" id="webL">LEFT<br>WEB</div>
     <div class="btn" id="webR">RIGHT<br>WEB</div>
@@ -169,9 +176,11 @@ document.getElementById('howto').innerHTML = isTouch
      <li>Hold the <b>left / right halves of the mouse</b> to shoot a web left / right and swing</li>
      <li>Let go to fling yourself. Hold both for a double swing</li>
      <li>Run into a wall to climb it. JUMP off walls too</li>
+     <li>Tap <b>1ST</b> (top right) for first person, <b>3RD</b> to switch back</li>
      <li>Landscape works best</li>`
   : `<li><b>WASD</b> to move, <b>Space</b> to jump, mouse to look</li>
      <li>Hold <b>left click</b> = left web, <b>right click</b> = right web</li>
+     <li><b>V</b> switches between first and third person</li>
      <li>Let go to fling yourself. Hold both for a double swing</li>
      <li>Run into a wall to climb it. Jump off walls too</li>`;
 
@@ -667,6 +676,9 @@ const torso = part(new THREE.CapsuleGeometry(0.28, 0.42, 10, 24), red, 0, 1.33, 
 torso.scale.set(1.18, 1, 0.78);
 const pelvis = part(new THREE.SphereGeometry(0.27, 24, 16), blue, 0, 0.98, 0);
 pelvis.scale.set(1.1, 0.8, 0.85);
+const belly = part(new THREE.SphereGeometry(0.33, 32, 24), red, 0, 1.17, 0.12);
+belly.scale.set(1.12, 0.95, 1.05);
+const bellyButton = part(new THREE.SphereGeometry(0.025, 10, 8), black, 0, 1.12, 0.47);
 for (const s of [-1, 1]) { // blue side panels
   const p = part(new THREE.CapsuleGeometry(0.1, 0.4, 8, 12), blue, s * 0.29, 1.3, 0);
   p.scale.set(0.6, 1, 1.2);
@@ -733,6 +745,15 @@ let yaw = 0, pitch = 0.25;
 const input = { x: 0, y: 0, jump: false, jumpPressed: false };
 const keys = {};
 let playing = false;
+let firstPerson = false;
+const pitchMin = () => firstPerson ? -1.35 : -0.35;
+function toggleView() {
+  firstPerson = !firstPerson;
+  model.visible = !firstPerson;
+  document.body.classList.toggle('fp', firstPerson);
+  document.getElementById('view').textContent = firstPerson ? '3RD' : '1ST';
+  pitch = firstPerson ? 0 : 0.25;
+}
 
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
 
@@ -751,6 +772,7 @@ addEventListener('keydown', e => {
   keys[e.code] = true;
   if (e.code === 'Space') { input.jumpPressed = true; e.preventDefault(); }
   if (e.code === 'KeyQ') setWeb('L', true);
+  if (e.code === 'KeyV' && !e.repeat) toggleView();
   if (e.code === 'KeyE') setWeb('R', true);
 });
 addEventListener('keyup', e => {
@@ -777,7 +799,7 @@ addEventListener('mouseup', e => {
 addEventListener('mousemove', e => {
   if (document.pointerLockElement !== cvs) return;
   yaw -= e.movementX * 0.0025;
-  pitch = THREE.MathUtils.clamp(pitch + e.movementY * 0.0025, -0.35, 1.3);
+  pitch = THREE.MathUtils.clamp(pitch + e.movementY * 0.0025, pitchMin(), 1.3);
 });
 addEventListener('blur', () => { setWeb('L', false); setWeb('R', false); for (const k in keys) keys[k] = false; });
 
@@ -793,6 +815,7 @@ function roleFor(t) {
   if (el.closest && el.closest('#webL')) return 'webL';
   if (el.closest && el.closest('#webR')) return 'webR';
   if (el.closest && el.closest('#jump')) return 'jump';
+  if (el.closest && el.closest('#view')) return 'view';
   if (el.closest && el.closest('#mouse')) return 'none';
   if (t.clientX < innerWidth * 0.4 && t.clientY > innerHeight * 0.35) {
     for (const v of touches.values()) if (v.role === 'joy') return 'cam';
@@ -808,6 +831,7 @@ addEventListener('touchstart', e => {
     touches.set(t.identifier, { role, x: t.clientX, y: t.clientY, ox: t.clientX, oy: t.clientY });
     if (role === 'webL') setWeb('L', true);
     if (role === 'webR') setWeb('R', true);
+    if (role === 'view') toggleView();
     if (role === 'jump') { input.jumpPressed = true; jumpBtn.classList.add('on'); }
     if (role === 'joy') {
       joyBase.style.display = 'block';
@@ -825,7 +849,7 @@ addEventListener('touchmove', e => {
     if (!s) continue;
     if (s.role === 'cam') {
       yaw -= (t.clientX - s.x) * 0.007;
-      pitch = THREE.MathUtils.clamp(pitch + (t.clientY - s.y) * 0.006, -0.35, 1.3);
+      pitch = THREE.MathUtils.clamp(pitch + (t.clientY - s.y) * 0.006, pitchMin(), 1.3);
     } else if (s.role === 'joy') {
       let dx = t.clientX - s.ox, dy = t.clientY - s.oy;
       const l = Math.hypot(dx, dy);
@@ -1107,6 +1131,14 @@ function insideBuilding(p) {
 }
 function updateCamera(dt) {
   camTarget.lerp(tmp.copy(pos).setY(pos.y + 1.6), Math.min(1, dt * 12));
+  if (firstPerson) {
+    camera.position.set(pos.x, pos.y + 1.8, pos.z);
+    camera.lookAt(
+      pos.x - Math.sin(yaw) * Math.cos(pitch),
+      pos.y + 1.8 - Math.sin(pitch),
+      pos.z - Math.cos(yaw) * Math.cos(pitch));
+    return;
+  }
   const dist = 8.5;
   camWant.set(
     Math.sin(yaw) * Math.cos(pitch) * dist,
