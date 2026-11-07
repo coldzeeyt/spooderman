@@ -32,6 +32,11 @@
     font-size: 22px; font-weight: bold; text-shadow: 2px 2px 0 #000;
     pointer-events: none; opacity: 0; transition: opacity .3s;
   }
+  #scare { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 30; display: none; }
+  #blackout {
+    position: fixed; inset: 0; z-index: 29; background: #000; color: #b7a3c9; display: none;
+    align-items: center; justify-content: center; font-size: 28px; letter-spacing: 6px;
+  }
   #crosshair {
     position: fixed; left: 50%; top: 45%; width: 8px; height: 8px; margin: -4px 0 0 -4px;
     border: 1px solid #fff; pointer-events: none; opacity: .6;
@@ -115,6 +120,8 @@
 <body>
 <div id="hud"></div>
 <div id="msg"></div>
+<canvas id="scare"></canvas>
+<div id="blackout"></div>
 <div id="crosshair"></div>
 
 <div id="touch">
@@ -132,9 +139,9 @@
 <div id="title">
   <div class="card">
     <h1>SPOODERMAN</h1>
-    <div class="sub">pre-alpha build 0.1.0 &mdash; art in progress</div>
+    <div class="sub">pre-alpha build 0.2.0 &mdash; art in progress</div>
     <ul id="howto"></ul>
-    <div class="note">No objective yet. Just swing around.</div>
+    <div class="note">No objective yet. Just swing around. Turn your sound on.</div>
     <button id="start">START (it's unfinished)</button>
   </div>
 </div>
@@ -196,6 +203,7 @@ function makeSky(radius) {
       hor: { value: new THREE.Color(HORIZON) },
       bot: { value: new THREE.Color(0x8d969c) },
       sunDir: { value: SUN_DIR },
+      sunAmt: { value: 1 },
     },
     vertexShader: `
       varying vec3 vP;
@@ -204,14 +212,14 @@ function makeSky(radius) {
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }`,
     fragmentShader: `
-      uniform vec3 top; uniform vec3 hor; uniform vec3 bot; uniform vec3 sunDir;
+      uniform vec3 top; uniform vec3 hor; uniform vec3 bot; uniform vec3 sunDir; uniform float sunAmt;
       varying vec3 vP;
       void main() {
         vec3 d = normalize(vP);
         float h = d.y;
         vec3 c = h > 0.0 ? mix(hor, top, pow(h, 0.55)) : mix(hor, bot, pow(-h, 0.5));
         float s = max(dot(d, sunDir), 0.0);
-        c += vec3(1.0, 0.9, 0.7) * (pow(s, 600.0) * 6.0 + pow(s, 12.0) * 0.25);
+        c += vec3(1.0, 0.9, 0.7) * (pow(s, 600.0) * 6.0 + pow(s, 12.0) * 0.25) * sunAmt;
         gl_FragColor = vec4(c, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -231,7 +239,8 @@ scene.add(sky);
   pmrem.dispose();
 }
 
-scene.add(new THREE.HemisphereLight(0xcfe2ff, 0x5d5448, 0.35));
+const hemi = new THREE.HemisphereLight(0xcfe2ff, 0x5d5448, 0.35);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff1dc, 2.6);
 sun.castShadow = true;
 sun.shadow.mapSize.set(isTouch ? 1024 : 2048, isTouch ? 1024 : 2048);
@@ -448,8 +457,8 @@ const BLOCK = 30, GRID = 12, HALF = (BLOCK * GRID) / 2;
 const SIDEWALK = 23;
 // collision boxes: {minX,maxX,minZ,maxZ,bottom,top,noAnchor}
 const buildings = [];
-function addCollider(minX, maxX, minZ, maxZ, bottom, top, noAnchor = false) {
-  buildings.push({ minX, maxX, minZ, maxZ, bottom, top, noAnchor, cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2 });
+function addCollider(minX, maxX, minZ, maxZ, bottom, top, noAnchor = false, bid = -1) {
+  buildings.push({ minX, maxX, minZ, maxZ, bottom, top, noAnchor, bid, cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2 });
 }
 
 {
@@ -494,6 +503,7 @@ function tree(x, z, y0 = 0.2) {
 
 const signs = ['TODO: texture', 'PLACEHOLDER', 'bldg_041.fbx', 'ART HERE', 'FIX LATER', 'NO LOD'];
 const signMeshes = [];
+const purpleBuildings = [];
 
 for (let gx = 0; gx < GRID; gx++) {
   for (let gz = 0; gz < GRID; gz++) {
@@ -525,9 +535,13 @@ for (let gx = 0; gx < GRID; gx++) {
       tiers.push({ w: w * 0.7, d: d * 0.7, y0: h1, y1: h });
     } else tiers.push({ w, d, y0: 0, y1: h });
 
+    const bid = purpleBuildings.length;
+    purpleBuildings.push({ bid, center: new THREE.Vector3(cx, 0, cz), mesh: null, flicker: 0 });
     for (const t of tiers) {
       boxFaces(style, 'roof', t.w, t.y1 - t.y0, t.d, cx, t.y0, cz, TU, TV);
-      addCollider(cx - t.w / 2, cx + t.w / 2, cz - t.d / 2, cz + t.d / 2, t.y0, t.y1);
+      addCollider(cx - t.w / 2, cx + t.w / 2, cz - t.d / 2, cz + t.d / 2, t.y0, t.y1, false, bid);
+      // hidden purple shell, revealed later
+      boxFaces('p_' + bid, 'q_' + bid, t.w + 0.9, t.y1 - t.y0 + 0.03, t.d + 0.9, cx, t.y0, cz, TU, TV);
       // cornice
       solid('trim', new THREE.BoxGeometry(t.w + 0.7, 0.55, t.d + 0.7), cx, t.y1 - 0.28, cz);
     }
@@ -549,6 +563,17 @@ for (let gx = 0; gx < GRID; gx++) {
   }
 }
 
+const purpleWall = std({ map: facadeTex[1], color: 0xb35cff, emissive: 0x5a12a0, emissiveIntensity: 0.6, roughness: 0.45 });
+const purpleRoof = std({ map: gravelTex, color: 0x9a45e0, emissive: 0x30085a, roughness: 0.8 });
+for (const p of purpleBuildings) {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(mergeGeometries(buckets['p_' + p.bid], false), purpleWall));
+  g.add(new THREE.Mesh(mergeGeometries(buckets['q_' + p.bid], false), purpleRoof));
+  g.visible = false;
+  scene.add(g);
+  p.mesh = g;
+  delete buckets['p_' + p.bid]; delete buckets['q_' + p.bid];
+}
 for (const name in buckets) {
   const geo = mergeGeometries(buckets[name], false);
   const mesh = new THREE.Mesh(geo, mats[name]);
@@ -574,6 +599,7 @@ const LIMIT = HALF + 9;
 }
 
 // T-posing placeholder NPCs (smoother now, still T-posing)
+const npcs = [];
 function makeNPC(x, z) {
   const g = new THREE.Group();
   const mat = std({ color: 0xcfcfcf, roughness: 0.6 });
@@ -586,7 +612,13 @@ function makeNPC(x, z) {
   add(new THREE.CapsuleGeometry(0.07, 1.6, 6, 12), 0, 1.6, 0, Math.PI / 2);
   add(new THREE.CapsuleGeometry(0.1, 0.75, 6, 12), -0.13, 0.5, 0);
   add(new THREE.CapsuleGeometry(0.1, 0.75, 6, 12), 0.13, 0.5, 0);
-  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTex('NPC_TEMP', '#222', '#0f0') }));
+  for (const sx of [-1, 1]) {
+    const e = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), std({ color: 0x111111 }));
+    e.position.set(sx * 0.08, 1.98, 0.2); g.add(e);
+  }
+  const normalTag = labelTex('NPC_TEMP', '#222', '#0f0');
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: normalTag }));
+  npcs.push({ g, tag, normalTag });
   tag.scale.set(2.4, 0.6, 1); tag.position.y = 2.7; g.add(tag);
   g.position.set(x, 0, z);
   g.rotation.y = rand() * Math.PI * 2;
@@ -696,7 +728,7 @@ const webs = { L: makeWeb(), R: makeWeb() };
 // ------------------------------------------------------------------
 const pos = new THREE.Vector3(0, 0, 8);
 const vel = new THREE.Vector3();
-let onGround = false, wallNormal = null, facing = 0;
+let onGround = false, wallNormal = null, facing = 0, standingOn = null;
 let yaw = 0, pitch = 0.25;
 const input = { x: 0, y: 0, jump: false, jumpPressed: false };
 const keys = {};
@@ -938,14 +970,20 @@ const GRAV = 32, PR = 0.45, PH = 1.9;
 function collide() {
   onGround = false;
   wallNormal = null;
+  standingOn = null;
   if (pos.y <= 0) { pos.y = 0; if (vel.y < 0) vel.y = 0; onGround = true; }
 
   for (const b of buildings) {
     if (pos.x + PR <= b.minX || pos.x - PR >= b.maxX) continue;
     if (pos.z + PR <= b.minZ || pos.z - PR >= b.maxZ) continue;
-    if (pos.y >= b.top || pos.y + PH <= b.bottom) continue;
+    // resting on top of this box (small tolerance so we don't flicker between grounded/airborne)
+    if (pos.y >= b.top) {
+      if (pos.y - b.top < 0.05 && vel.y <= 0) { pos.y = b.top; vel.y = 0; onGround = true; standingOn = b; }
+      continue;
+    }
+    if (pos.y + PH <= b.bottom) continue;
     // small ledges (curbs) are just stepped onto
-    if (b.top - pos.y <= 0.35 && vel.y <= 1) { pos.y = b.top; if (vel.y < 0) vel.y = 0; onGround = true; continue; }
+    if (b.top - pos.y <= 0.35 && vel.y <= 1) { pos.y = b.top; if (vel.y < 0) vel.y = 0; onGround = true; standingOn = b; continue; }
 
     const pens = [
       { d: pos.x + PR - b.minX, ax: 'x', s: -1 },
@@ -962,6 +1000,7 @@ function collide() {
       pos.y = b.top;
       if (vel.y < 0) vel.y = 0;
       onGround = true;
+      standingOn = b;
     } else if (m.ax === 'y') {
       pos.y = b.bottom - PH;
       if (vel.y > 0) vel.y = 0;
@@ -1097,6 +1136,239 @@ function flash(text, secs = 2) {
 }
 
 // ------------------------------------------------------------------
+// the loop: 2 calm minutes, then the purple spreads. land on it and...
+// ------------------------------------------------------------------
+const FAST = /fast/.test(location.search);  // ?fast = short timers for testing
+const CALM = FAST ? 6 : 120;    // seconds of normal city each loop
+const DARKEN = FAST ? 10 : 60;  // how long the city takes to go fully dark
+let loopT = 0, loopN = 1, corruption = 0, spreadT = 0, scareT = -1, wasGrounded = true, warned = false;
+const purpleSet = new Set();
+
+const fogBase = new THREE.Color(HORIZON), fogDark = new THREE.Color(0x231030);
+const skyU = sky.material.uniforms;
+const skyBase = { top: skyU.top.value.clone(), hor: skyU.hor.value.clone(), bot: skyU.bot.value.clone() };
+const skyDark = { top: new THREE.Color(0x0e0418), hor: new THREE.Color(0x35164a), bot: new THREE.Color(0x10061a) };
+const sunBase = sun.color.clone(), sunDark = new THREE.Color(0xa07cff);
+const envMats = [];
+scene.traverse(o => {
+  if (o.material && o.material.isMeshStandardMaterial && !envMats.includes(o.material)) {
+    o.material.userData.env = o.material.envMapIntensity;
+    envMats.push(o.material);
+  }
+});
+const creepyTag = labelTex('BEHIND YOU', '#1a0000', '#ff2a2a');
+
+function applyCorruption(c) {
+  scene.fog.color.copy(fogBase).lerp(fogDark, c);
+  scene.fog.near = 90 - 65 * c;
+  scene.fog.far = 340 - 190 * c;
+  for (const k of ['top', 'hor', 'bot']) skyU[k].value.copy(skyBase[k]).lerp(skyDark[k], c);
+  skyU.sunAmt.value = 1 - 0.9 * c;
+  sun.intensity = 2.6 - 2.1 * c;
+  sun.color.copy(sunBase).lerp(sunDark, c);
+  hemi.intensity = 0.35 - 0.2 * c;
+  for (const m of envMats) m.envMapIntensity = m.userData.env * (1 - 0.85 * c);
+  renderer.toneMappingExposure = 1.05 - 0.2 * c;
+  for (const n of npcs) n.tag.material.map = c > 0.3 ? creepyTag : n.normalTag;
+}
+
+function spreadPurple() {
+  const free = purpleBuildings.filter(p => !purpleSet.has(p.bid));
+  if (!free.length) return;
+  // favour buildings near the player so you see it happen
+  free.sort((a, b) => a.center.distanceToSquared(pos) - b.center.distanceToSquared(pos));
+  const pick = free[Math.floor(Math.random() * Math.min(free.length, 6))];
+  purpleSet.add(pick.bid);
+  pick.flicker = 0.8;
+  pick.mesh.visible = true;
+}
+
+// --- audio (made on the fly, no files) ---
+let actx = null, droneGain = null;
+function initAudio() {
+  if (actx) return;
+  try {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    droneGain = actx.createGain();
+    droneGain.gain.value = 0;
+    const lp = actx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 260;
+    for (const f of [55, 58.3, 82.4]) {
+      const o = actx.createOscillator();
+      o.type = 'sawtooth'; o.frequency.value = f;
+      o.connect(lp); o.start();
+    }
+    lp.connect(droneGain);
+    droneGain.connect(actx.destination);
+  } catch (e) { actx = null; }
+}
+function setDrone(v) {
+  if (actx) droneGain.gain.setTargetAtTime(v, actx.currentTime, 0.3);
+}
+function screech() {
+  if (!actx) return;
+  const t = actx.currentTime;
+  const out = actx.createGain();
+  out.gain.setValueAtTime(0.0001, t);
+  out.gain.exponentialRampToValueAtTime(0.85, t + 0.02);
+  out.gain.setValueAtTime(0.85, t + 1.1);
+  out.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+  const shaper = actx.createWaveShaper();
+  const curve = new Float32Array(1024);
+  for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; curve[i] = (61 * x) / (1 + 60 * Math.abs(x)); }
+  shaper.curve = curve;
+  shaper.connect(out);
+  out.connect(actx.destination);
+  const buf = actx.createBuffer(1, actx.sampleRate * 1.5, actx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.5;
+  const n = actx.createBufferSource(); n.buffer = buf; n.connect(shaper); n.start(t);
+  for (const [f0, f1, type] of [[1400, 180, 'sawtooth'], [1460, 240, 'square'], [90, 40, 'sawtooth']]) {
+    const o = actx.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f1, t + 1.4);
+    o.connect(shaper); o.start(t); o.stop(t + 1.5);
+  }
+}
+
+// --- the face ---
+const scareCv = document.getElementById('scare');
+const blackout = document.getElementById('blackout');
+function drawScare(k) {
+  const W = scareCv.width = innerWidth, H = scareCv.height = innerHeight;
+  const g = scareCv.getContext('2d');
+  g.fillStyle = Math.random() < 0.12 ? '#fff' : '#000';
+  g.fillRect(0, 0, W, H);
+  const glow = g.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
+  glow.addColorStop(0, 'rgba(140,0,30,0.7)'); glow.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = glow; g.fillRect(0, 0, W, H);
+
+  const lunge = 0.55 + Math.pow(k, 0.5) * 0.85;
+  const s = Math.min(W, H) * lunge / 420;
+  const sh = 12 + k * 40;
+  g.save();
+  g.translate(W / 2 + (Math.random() - 0.5) * sh, H / 2 + (Math.random() - 0.5) * sh);
+  g.rotate((Math.random() - 0.5) * 0.1);
+  g.scale(s * (1 + (Math.random() - 0.5) * 0.06), s);
+
+  // head
+  const skin = g.createRadialGradient(0, -20, 20, 0, 0, 230);
+  skin.addColorStop(0, '#d9dccb'); skin.addColorStop(0.7, '#8c9282'); skin.addColorStop(1, '#2b2e27');
+  g.fillStyle = skin;
+  g.beginPath(); g.ellipse(0, 0, 150, 205, 0, 0, Math.PI * 2); g.fill();
+  // sockets
+  for (const sx of [-1, 1]) {
+    const sock = g.createRadialGradient(sx * 62, -55, 5, sx * 62, -55, 80);
+    sock.addColorStop(0, '#000'); sock.addColorStop(0.6, '#000'); sock.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = sock;
+    g.beginPath(); g.ellipse(sx * 62, -55, 70, 78, sx * 0.2, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#fff';
+    g.beginPath(); g.arc(sx * 58 + (Math.random() - 0.5) * 6, -50 + (Math.random() - 0.5) * 6, 5, 0, Math.PI * 2); g.fill();
+    // bleeding
+    g.strokeStyle = '#5a0000'; g.lineWidth = 6;
+    g.beginPath(); g.moveTo(sx * 60, -10); g.lineTo(sx * 64 + sx * 4, 40 + k * 60); g.stroke();
+  }
+  // mouth, opening wider as it lunges
+  const mo = 70 + k * 40 + Math.random() * 10;
+  g.fillStyle = '#050000';
+  g.beginPath(); g.ellipse(0, 95, 62, mo, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#e8e2c8';
+  for (let i = -5; i <= 5; i++) {
+    const x = i * 11;
+    const top = 95 - mo * Math.sqrt(Math.max(0, 1 - (x / 62) ** 2));
+    const bot = 95 + mo * Math.sqrt(Math.max(0, 1 - (x / 62) ** 2));
+    g.beginPath(); g.moveTo(x - 5, top); g.lineTo(x + 5, top); g.lineTo(x, top + 22); g.fill();
+    g.beginPath(); g.moveTo(x - 5, bot); g.lineTo(x + 5, bot); g.lineTo(x, bot - 22); g.fill();
+  }
+  // cracks
+  g.strokeStyle = 'rgba(30,10,10,0.7)'; g.lineWidth = 3;
+  for (let i = 0; i < 6; i++) {
+    g.beginPath(); let x = (Math.random() - 0.5) * 200, y = -200 + Math.random() * 60; g.moveTo(x, y);
+    for (let j = 0; j < 5; j++) { x += (Math.random() - 0.5) * 50; y += 25; g.lineTo(x, y); }
+    g.stroke();
+  }
+  g.restore();
+  // static
+  for (let i = 0; i < 260; i++) {
+    g.fillStyle = `rgba(255,255,255,${Math.random() * 0.25})`;
+    g.fillRect(Math.random() * W, Math.random() * H, 2 + Math.random() * 60, 2);
+  }
+}
+
+function startScare() {
+  scareT = 0;
+  playing = false;
+  setWeb('L', false); setWeb('R', false);
+  input.x = input.y = 0;
+  setDrone(0);
+  screech();
+  try { navigator.vibrate?.([300, 80, 500]); } catch (e) {}
+  scareCv.style.display = 'block';
+}
+function resetLoop() {
+  loopN++;
+  loopT = 0; spreadT = 0; corruption = 0; warned = false;
+  for (const p of purpleBuildings) p.mesh.visible = false;
+  purpleSet.clear();
+  applyCorruption(0);
+  pos.set(0, 0, 8); vel.set(0, 0, 0);
+  yaw = 0; pitch = 0.25; facing = Math.PI;
+  for (const s of ['L', 'R']) { webs[s].state = 'idle'; webs[s].held = false; }
+  camTarget.set(0, 1.6, 8);
+}
+if (FAST) window.__t = { pos, vel, purpleSet, buildings, get loopN() { return loopN; }, get loopT() { return loopT; }, get playing() { return playing; }, get scareT() { return scareT; } };
+function updateLoop(dt) {
+  if (scareT >= 0) {
+    const before = scareT;
+    scareT += dt;
+    if (scareT < 1.5) drawScare(scareT / 1.5);
+    if (before < 1.5 && scareT >= 1.5) {
+      scareCv.style.display = 'none';
+      blackout.textContent = '';
+      blackout.style.transition = 'none';
+      blackout.style.opacity = 1;
+      blackout.style.display = 'flex';
+      resetLoop();
+    }
+    if (before < 2.3 && scareT >= 2.3) blackout.textContent = `LOOP ${loopN}`;
+    if (before < 3.6 && scareT >= 3.6) {
+      blackout.style.transition = 'opacity 1.2s';
+      blackout.style.opacity = 0;
+      playing = true;
+      last = performance.now();
+      flash(loopN === 2 ? 'wait... this already happened' : 'again.', 3);
+    }
+    if (scareT >= 5) { blackout.style.display = 'none'; scareT = -1; }
+    return;
+  }
+  if (!playing) return;
+
+  loopT += dt;
+  if (loopT > CALM) {
+    if (!warned) { warned = true; flash(loopN > 1 ? 'it\'s starting' : '...', 2.5); }
+    corruption = Math.min(1, (loopT - CALM) / DARKEN);
+    spreadT -= dt;
+    if (spreadT <= 0) {
+      spreadPurple();
+      spreadT = Math.max(1.2, 4.5 - (loopT - CALM) / 20);
+    }
+    applyCorruption(corruption);
+    setDrone(corruption * 0.12);
+  }
+
+  for (const p of purpleBuildings) {
+    if (p.flicker > 0) { p.flicker -= dt; p.mesh.visible = p.flicker <= 0 || Math.random() < 0.55; }
+  }
+  purpleWall.emissiveIntensity = 0.6 + Math.sin(animT * 3) * 0.35;
+
+  if (corruption > 0.2) for (const n of npcs) n.g.lookAt(pos.x, 0, pos.z);
+
+  if (onGround && !wasGrounded && standingOn && purpleSet.has(standingOn.bid)) startScare();
+  wasGrounded = onGround;
+}
+
+// ------------------------------------------------------------------
 // loop
 // ------------------------------------------------------------------
 let last = performance.now(), animT = 0, fps = 60, fpsAcc = 0, fpsN = 0, hudT = 0;
@@ -1141,6 +1413,7 @@ function frame(now) {
   updateWeb('L', dt);
   updateWeb('R', dt);
 
+  updateLoop(dt);
   updateCamera(dt);
   sun.target.position.copy(pos);
   sun.position.copy(pos).addScaledVector(SUN_DIR, 150);
@@ -1152,12 +1425,14 @@ function frame(now) {
   hudT -= dt;
   if (hudT <= 0) {
     hudT = 0.15;
-    const st = info.attached ? 'SWINGING' : info.climbing ? 'climbing' : onGround ? 'grounded' : 'airborne';
+    const glitch = corruption > 0.4 && Math.random() < corruption * 0.3;
+    const st = glitch ? 'DON\'T LAND' : info.attached ? 'SWINGING' : info.climbing ? 'climbing' : onGround ? 'grounded' : 'airborne';
     hud.innerHTML =
-      `<b>SPOODERMAN</b> v0.1.0-prealpha\n` +
+      `<b>SPOODERMAN</b> v0.2.0-prealpha\n` +
+      (loopN > 1 ? `loop: ${loopN}\n` : '') +
       `spd: ${vel.length().toFixed(1)}  alt: ${pos.y.toFixed(0)}m\n` +
       `state: ${st}\n` +
-      `fps: ${fps}  // debug text pls remove`;
+      `fps: ${glitch ? 666 : fps}  // debug text pls remove`;
   }
 }
 requestAnimationFrame(frame);
@@ -1165,6 +1440,7 @@ requestAnimationFrame(frame);
 document.getElementById('start').addEventListener('click', () => {
   document.getElementById('title').style.display = 'none';
   playing = true;
+  initAudio();
   last = performance.now();
   flash(isTouch ? 'hold the mouse buttons to web swing' : 'hold left / right click to web swing', 3);
   if (!isTouch) lockPointer();
