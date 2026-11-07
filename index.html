@@ -1255,9 +1255,9 @@ function noiseBuf(secs) {
   return buf;
 }
 function thump() { if (actx) boom(actx.currentTime, 0.9); }
-function scream() {
+function scream(t0) {
   if (!actx) return;
-  const t = actx.currentTime, END = 2.2;
+  const t = t0 ?? actx.currentTime, END = 2.2;
   boom(t, 1.2);
   const out = actx.createGain();
   out.gain.setValueAtTime(0.0001, t);
@@ -1479,6 +1479,28 @@ function resetLoop() {
   camTarget.set(0, 1.6, 8);
 }
 if (FAST) window.__t = { pos, vel, purpleSet, buildings, get loopN() { return loopN; }, get loopT() { return loopT; }, get playing() { return playing; }, get scareT() { return scareT; } };
+if (FAST) window.__t.renderAudio = async (total, cut, screamAt) => {
+  // offline render of the drone + scream, used only for recording clips
+  const sr = 44100, off = new OfflineAudioContext(1, Math.ceil(sr * total), sr);
+  const saved = [actx, master];
+  actx = off;
+  master = off.createDynamicsCompressor();
+  master.threshold.value = -10; master.ratio.value = 4;
+  master.connect(off.destination);
+  const dg = off.createGain();
+  dg.gain.setValueAtTime(0.12, 0); dg.gain.setValueAtTime(0, cut);
+  const lp = off.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 260;
+  for (const f of [55, 58.3, 82.4]) { const o = off.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.connect(lp); o.start(0); }
+  lp.connect(dg); dg.connect(master);
+  scream(screamAt);
+  [actx, master] = saved;
+  const buf = await off.startRendering();
+  const d = buf.getChannelData(0), i16 = new Int16Array(d.length);
+  for (let i = 0; i < d.length; i++) i16[i] = Math.max(-1, Math.min(1, d[i])) * 32767;
+  let bin = ''; const u8 = new Uint8Array(i16.buffer);
+  for (let i = 0; i < u8.length; i += 8192) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+  return btoa(bin);
+};
 function updateLoop(dt) {
   if (scareT >= 0) {
     const before = scareT;
