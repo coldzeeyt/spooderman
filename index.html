@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Spooderman (alpha)</title>
+<style>
+  :root {
+    --ui-bg: rgba(20, 20, 20, 0.55);
+    --ui-fg: #f2f2f2;
+    --ui-line: rgba(255, 255, 255, 0.6);
+    --accent: #ff2bd6;
+  }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #8fb6d9; color: var(--ui-fg);
+    font-family: "Courier New", Courier, monospace;
+    touch-action: none; -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
+
+  #hud {
+    position: fixed; top: max(8px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left));
+    font-size: 12px; line-height: 1.35; pointer-events: none;
+    text-shadow: 1px 1px 0 #000; white-space: pre;
+  }
+  #hud b { color: #ffe14d; }
+  #msg {
+    position: fixed; top: 30%; left: 0; right: 0; text-align: center;
+    font-size: 22px; font-weight: bold; text-shadow: 2px 2px 0 #000;
+    pointer-events: none; opacity: 0; transition: opacity .3s;
+  }
+  #crosshair {
+    position: fixed; left: 50%; top: 45%; width: 8px; height: 8px; margin: -4px 0 0 -4px;
+    border: 1px solid #fff; pointer-events: none; opacity: .6;
+  }
+
+  /* ---------- touch controls ---------- */
+  #touch { display: none; }
+  body.touch #touch { display: block; }
+  #joyBase {
+    position: fixed; width: 120px; height: 120px; margin: -60px 0 0 -60px;
+    border: 2px dashed var(--ui-line); border-radius: 50%; background: var(--ui-bg);
+    pointer-events: none; display: none;
+  }
+  #joyKnob {
+    position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; margin: -25px 0 0 -25px;
+    background: rgba(255,255,255,.75); border-radius: 50%;
+  }
+  #joyHint {
+    position: fixed; left: max(16px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom));
+    font-size: 11px; opacity: .7; pointer-events: none; text-shadow: 1px 1px 0 #000;
+  }
+  /* the "mouse": left half = left web, right half = right web */
+  #mouse {
+    position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom));
+    width: 170px; height: 200px; border-radius: 85px 85px 60px 60px;
+    border: 3px solid #ddd; background: #3a3a3a; overflow: hidden;
+    box-shadow: 4px 4px 0 rgba(0,0,0,.35);
+  }
+  #mouse .btn {
+    position: absolute; top: 0; height: 52%; width: 50%;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    font-size: 13px; font-weight: bold; color: #fff; background: #555;
+  }
+  #webL { left: 0; border-right: 2px solid #222; }
+  #webR { right: 0; }
+  #mouse .btn.on { background: var(--accent); color: #000; }
+  #mouse .label {
+    position: absolute; bottom: 14px; left: 0; right: 0; text-align: center; font-size: 10px; color: #aaa;
+    pointer-events: none;
+  }
+  #mouse .wheel {
+    position: absolute; left: 50%; top: 18%; width: 14px; height: 34px; margin-left: -7px;
+    background: #222; border-radius: 7px; pointer-events: none;
+  }
+  #jump {
+    position: fixed; right: calc(max(16px, env(safe-area-inset-right)) + 186px);
+    bottom: max(24px, env(safe-area-inset-bottom));
+    width: 78px; height: 78px; border-radius: 50%; border: 3px solid #ddd; background: #3a3a3a;
+    display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 13px;
+    box-shadow: 4px 4px 0 rgba(0,0,0,.35);
+  }
+  #jump.on { background: #ffe14d; color: #000; }
+  @media (max-height: 420px) {
+    #mouse { width: 130px; height: 150px; }
+    #jump { width: 62px; height: 62px; right: calc(max(16px, env(safe-area-inset-right)) + 144px); }
+  }
+  @media (max-width: 520px) {
+    #mouse { width: 136px; height: 160px; }
+    #jump { width: 64px; height: 64px; right: calc(max(16px, env(safe-area-inset-right)) + 150px); }
+  }
+
+  /* ---------- title screen ---------- */
+  #title {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(10, 10, 30, .82); z-index: 10; padding: 16px; box-sizing: border-box;
+  }
+  #title .card {
+    max-width: 440px; width: 100%; background: #222; border: 3px solid #fff; padding: 18px;
+    box-shadow: 8px 8px 0 var(--accent); max-height: 90vh; overflow: auto;
+  }
+  #title h1 { margin: 0 0 4px; font-size: 30px; letter-spacing: 1px; color: #ff4040; text-shadow: 3px 3px 0 #1d2bff; }
+  #title .sub { font-size: 11px; color: #999; margin-bottom: 12px; }
+  #title ul { padding-left: 18px; margin: 8px 0; font-size: 13px; line-height: 1.5; }
+  #title .note { font-size: 11px; color: #ffe14d; margin-top: 10px; }
+  #start {
+    margin-top: 14px; width: 100%; padding: 14px; font-size: 18px; font-weight: bold;
+    font-family: inherit; background: #ff4040; color: #fff; border: 3px solid #fff; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div id="hud"></div>
+<div id="msg"></div>
+<div id="crosshair"></div>
+
+<div id="touch">
+  <div id="joyBase"><div id="joyKnob"></div></div>
+  <div id="joyHint">drag left side = move<br>drag anywhere else = look</div>
+  <div id="jump">JUMP</div>
+  <div id="mouse">
+    <div class="btn" id="webL">LEFT<br>WEB</div>
+    <div class="btn" id="webR">RIGHT<br>WEB</div>
+    <div class="wheel"></div>
+    <div class="label">(this is a mouse)</div>
+  </div>
+</div>
+
+<div id="title">
+  <div class="card">
+    <h1>SPOODERMAN</h1>
+    <div class="sub">pre-alpha build 0.0.7 &mdash; art not final (art not started)</div>
+    <ul id="howto"></ul>
+    <div class="note">Goal: grab all the pink "?" cubes on the rooftops. There is no ending yet.</div>
+    <button id="start">START (it's unfinished)</button>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+// ------------------------------------------------------------------
+// setup
+// ------------------------------------------------------------------
+const isTouch = ('ontouchstart' in window) || matchMedia('(pointer: coarse)').matches;
+if (isTouch) document.body.classList.add('touch');
+
+document.getElementById('howto').innerHTML = isTouch
+  ? `<li>Drag on the <b>left side</b> to move</li>
+     <li>Drag anywhere else to look around</li>
+     <li>Hold the <b>left / right halves of the mouse</b> to shoot a web left / right and swing</li>
+     <li>Let go to fling yourself. Hold both for a double swing</li>
+     <li>Run into a wall to climb it. JUMP off walls too</li>
+     <li>Landscape works best</li>`
+  : `<li><b>WASD</b> to move, <b>Space</b> to jump, mouse to look</li>
+     <li>Hold <b>left click</b> = left web, <b>right click</b> = right web</li>
+     <li>Let go to fling yourself. Hold both for a double swing</li>
+     <li>Run into a wall to climb it. Jump off walls too</li>`;
+
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+// deliberately crunchy resolution
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1) * 0.55);
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fb6d9);
+scene.fog = new THREE.Fog(0x8fb6d9, 60, 260);
+
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 600);
+
+scene.add(new THREE.HemisphereLight(0xdfefff, 0x55504a, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+sun.position.set(80, 140, 40);
+scene.add(sun);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ------------------------------------------------------------------
+// placeholder textures (canvas, nearest filtering for that unfinished look)
+// ------------------------------------------------------------------
+function canvasTex(size, draw) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  draw(c.getContext('2d'), size);
+  const t = new THREE.CanvasTexture(c);
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const missingTex = canvasTex(16, (g, s) => {
+  for (let y = 0; y < 2; y++) for (let x = 0; x < 2; x++) {
+    g.fillStyle = (x + y) % 2 ? '#000' : '#ff00dc';
+    g.fillRect(x * s / 2, y * s / 2, s / 2, s / 2);
+  }
+});
+const windowTex = canvasTex(32, (g, s) => {
+  g.fillStyle = '#9a9a9a'; g.fillRect(0, 0, s, s);
+  g.fillStyle = '#3d4a5a';
+  g.fillRect(6, 6, 20, 18);
+  g.fillStyle = '#5f7088'; g.fillRect(6, 6, 9, 8);
+});
+function labelTex(text, bg = '#fff', fg = '#000') {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = bg; g.fillRect(0, 0, 256, 64);
+  g.strokeStyle = fg; g.lineWidth = 4; g.strokeRect(2, 2, 252, 60);
+  g.fillStyle = fg; g.font = 'bold 26px Courier New, monospace';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(text, 128, 33);
+  const t = new THREE.CanvasTexture(c);
+  t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// ------------------------------------------------------------------
+// city
+// ------------------------------------------------------------------
+let seed = 1337;
+const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+
+const BLOCK = 30, GRID = 12, HALF = (BLOCK * GRID) / 2;
+const buildings = []; // {minX,maxX,minZ,maxZ,top}
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(HALF * 2 + 80, HALF * 2 + 80),
+  new THREE.MeshLambertMaterial({ color: 0x6d6d68 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+const grid = new THREE.GridHelper(HALF * 2 + 80, (GRID * BLOCK + 80) / 5, 0x444444, 0x5c5c58);
+grid.position.y = 0.02;
+scene.add(grid);
+
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+const flatColors = [0x8d8d8d, 0xa4a4a0, 0x7b7f86, 0xb3aa9a, 0x6e6e74, 0x9a8f86];
+const signs = ['TODO: texture', 'PLACEHOLDER', 'bldg_041.obj', 'ART HERE', 'lorem ipsum', 'FIX LATER', 'NO LOD'];
+
+for (let gx = 0; gx < GRID; gx++) {
+  for (let gz = 0; gz < GRID; gz++) {
+    const cx = -HALF + gx * BLOCK + BLOCK / 2;
+    const cz = -HALF + gz * BLOCK + BLOCK / 2;
+    // keep a little plaza free at spawn
+    if (Math.abs(cx) < 20 && Math.abs(cz) < 20) continue;
+    const w = 12 + rand() * 9, d = 12 + rand() * 9;
+    const tall = rand() < 0.15;
+    const h = tall ? 70 + rand() * 50 : 14 + rand() * 45;
+
+    let mat;
+    const r = rand();
+    if (r < 0.1) {
+      const t = missingTex.clone(); t.needsUpdate = true;
+      t.repeat.set(Math.round(w / 4), Math.round(h / 4));
+      mat = new THREE.MeshLambertMaterial({ map: t });
+    } else if (r < 0.45) {
+      const t = windowTex.clone(); t.needsUpdate = true;
+      t.repeat.set(Math.round(w / 3), Math.round(h / 3));
+      mat = new THREE.MeshLambertMaterial({ map: t });
+    } else {
+      mat = new THREE.MeshLambertMaterial({ color: flatColors[Math.floor(rand() * flatColors.length)] });
+    }
+    const m = new THREE.Mesh(boxGeo, mat);
+    m.scale.set(w, h, d);
+    m.position.set(cx, h / 2, cz);
+    scene.add(m);
+    buildings.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2, maxZ: cz + d / 2, top: h, cx, cz });
+
+    // the odd unfinished rooftop thing
+    if (rand() < 0.25) {
+      const ac = new THREE.Mesh(boxGeo, new THREE.MeshLambertMaterial({ color: 0x5a5a5a }));
+      ac.scale.set(3, 2, 3);
+      ac.position.set(cx + (rand() - .5) * (w - 4), h + 1, cz + (rand() - .5) * (d - 4));
+      scene.add(ac);
+    }
+    if (rand() < 0.12) {
+      const s = new THREE.Mesh(
+        new THREE.PlaneGeometry(8, 2),
+        new THREE.MeshBasicMaterial({ map: labelTex(signs[Math.floor(rand() * signs.length)]) })
+      );
+      s.position.set(cx, Math.min(h - 3, 8 + rand() * 10), cz + d / 2 + 0.05);
+      scene.add(s);
+    }
+  }
+}
+
+// invisible-ish world border, marked with a lazy wireframe
+const border = new THREE.LineSegments(
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(HALF * 2 + 20, 200, HALF * 2 + 20)),
+  new THREE.LineBasicMaterial({ color: 0xff00dc })
+);
+border.position.y = 100;
+scene.add(border);
+const LIMIT = HALF + 9;
+
+// a few T-posing placeholder NPCs
+function makeNPC(x, z) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color: 0xcfcfcf });
+  const body = new THREE.Mesh(boxGeo, mat); body.scale.set(.7, 1.1, .4); body.position.y = 1.25; g.add(body);
+  const arms = new THREE.Mesh(boxGeo, mat); arms.scale.set(2.2, .2, .2); arms.position.y = 1.7; g.add(arms);
+  const head = new THREE.Mesh(boxGeo, mat); head.scale.set(.5, .5, .5); head.position.y = 2.1; g.add(head);
+  const legs = new THREE.Mesh(boxGeo, mat); legs.scale.set(.6, .7, .3); legs.position.y = .35; g.add(legs);
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTex('NPC_TEMP', '#222', '#0f0') }));
+  tag.scale.set(2.4, .6, 1); tag.position.y = 2.9; g.add(tag);
+  g.position.set(x, 0, z);
+  g.rotation.y = rand() * Math.PI * 2;
+  scene.add(g);
+}
+for (let i = 0; i < 14; i++) {
+  // stand them on the street lines between blocks
+  const gx = Math.floor(rand() * GRID), gz = Math.floor(rand() * GRID);
+  makeNPC(-HALF + gx * BLOCK + 1.5, -HALF + gz * BLOCK + BLOCK / 2 + (rand() - .5) * 10);
+}
+
+// a big billboard
+{
+  const bb = new THREE.Mesh(new THREE.PlaneGeometry(24, 6),
+    new THREE.MeshBasicMaterial({ map: labelTex('INSERT LOGO', '#ffe14d', '#000'), side: THREE.DoubleSide }));
+  bb.position.set(0, 9, -24);
+  scene.add(bb);
+  const pole = new THREE.Mesh(boxGeo, new THREE.MeshLambertMaterial({ color: 0x444444 }));
+  pole.scale.set(.6, 6, .6); pole.position.set(0, 3, -24); scene.add(pole);
+}
+
+// ------------------------------------------------------------------
+// collectibles
+// ------------------------------------------------------------------
+const cubes = [];
+{
+  const picks = [...buildings].sort(() => rand() - 0.5).slice(0, 12);
+  const mat = new THREE.MeshBasicMaterial({ map: labelTex('?', '#ff2bd6', '#000') });
+  for (const b of picks) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.4, 1.4), mat);
+    m.position.set(b.cx, b.top + 1.6, b.cz);
+    scene.add(m);
+    cubes.push(m);
+  }
+}
+let collected = 0;
+
+// ------------------------------------------------------------------
+// player model (boxes. lots of boxes.)
+// ------------------------------------------------------------------
+const red = new THREE.MeshLambertMaterial({ color: 0xd61f1f });
+const blue = new THREE.MeshLambertMaterial({ color: 0x2236b8 });
+const white = new THREE.MeshBasicMaterial({ color: 0xffffff });
+const black = new THREE.MeshBasicMaterial({ color: 0x111111 });
+
+const player = new THREE.Group();
+scene.add(player);
+const model = new THREE.Group();
+player.add(model);
+
+function part(mat, sx, sy, sz, x, y, z, parent = model) {
+  const m = new THREE.Mesh(boxGeo, mat);
+  m.scale.set(sx, sy, sz); m.position.set(x, y, z);
+  parent.add(m); return m;
+}
+part(red, .8, .8, .45, 0, 1.2, 0);                 // torso
+part(blue, .82, .25, .47, 0, .9, 0);               // belt-ish
+const head = part(red, .6, .6, .6, 0, 1.9, 0);     // head
+part(white, .2, .16, .05, -.14, 1.95, .31);        // eyes (lopsided on purpose)
+part(white, .22, .2, .05, .15, 1.97, .31);
+part(black, .2, .03, .02, 0, 1.75, .31);           // "mouth" line, why not
+
+function limb(mat, x, y, len) {
+  const pivot = new THREE.Group();
+  pivot.position.set(x, y, 0);
+  model.add(pivot);
+  part(mat, .24, len, .24, 0, -len / 2, 0, pivot);
+  return pivot;
+}
+const legL = limb(blue, -.2, .8, .8);
+const legR = limb(blue, .2, .8, .8);
+const armL = limb(red, -.53, 1.55, .72);
+const armR = limb(red, .53, 1.55, .72);
+
+// ------------------------------------------------------------------
+// webs
+// ------------------------------------------------------------------
+function makeWeb() {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffffff }));
+  line.frustumCulled = false;
+  line.visible = false;
+  scene.add(line);
+  const blob = new THREE.Mesh(new THREE.BoxGeometry(.6, .6, .6), white);
+  blob.visible = false;
+  scene.add(blob);
+  return {
+    line, blob,
+    held: false,       // button is down
+    state: 'idle',     // idle | shooting | attached | missing | retracting
+    anchor: new THREE.Vector3(),
+    tip: new THREE.Vector3(),
+    len: 0, targetLen: 0, t: 0,
+  };
+}
+const webs = { L: makeWeb(), R: makeWeb() };
+
+// ------------------------------------------------------------------
+// state + input
+// ------------------------------------------------------------------
+const pos = new THREE.Vector3(0, 0, 8);
+const vel = new THREE.Vector3();
+let onGround = false, wallNormal = null, facing = 0;
+let yaw = 0, pitch = 0.25;
+const input = { x: 0, y: 0, jump: false, jumpPressed: false };
+const keys = {};
+let playing = false;
+
+const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
+
+function setWeb(side, down) {
+  const w = webs[side];
+  if (down === w.held) return;
+  w.held = down;
+  const el = document.getElementById('web' + side);
+  if (el) el.classList.toggle('on', down);
+  if (down) fireWeb(side);
+  else releaseWeb(side);
+}
+
+// keyboard / mouse
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') { input.jumpPressed = true; e.preventDefault(); }
+  if (e.code === 'KeyQ') setWeb('L', true);
+  if (e.code === 'KeyE') setWeb('R', true);
+});
+addEventListener('keyup', e => {
+  keys[e.code] = false;
+  if (e.code === 'KeyQ') setWeb('L', false);
+  if (e.code === 'KeyE') setWeb('R', false);
+});
+const cvs = renderer.domElement;
+function lockPointer() {
+  try { const r = cvs.requestPointerLock?.(); if (r && r.catch) r.catch(() => {}); } catch (e) {}
+}
+cvs.addEventListener('contextmenu', e => e.preventDefault());
+cvs.addEventListener('mousedown', e => {
+  if (!playing || isTouch) return;
+  if (document.pointerLockElement !== cvs) lockPointer();
+  if (e.button === 0) setWeb('L', true);
+  if (e.button === 2) setWeb('R', true);
+});
+addEventListener('mouseup', e => {
+  if (isTouch) return;
+  if (e.button === 0) setWeb('L', false);
+  if (e.button === 2) setWeb('R', false);
+});
+addEventListener('mousemove', e => {
+  if (document.pointerLockElement !== cvs) return;
+  yaw -= e.movementX * 0.0025;
+  pitch = THREE.MathUtils.clamp(pitch + e.movementY * 0.0025, -0.35, 1.3);
+});
+addEventListener('blur', () => { setWeb('L', false); setWeb('R', false); for (const k in keys) keys[k] = false; });
+
+// touch
+const touches = new Map(); // id -> {role, x, y, ox, oy}
+const joyBase = document.getElementById('joyBase');
+const joyKnob = document.getElementById('joyKnob');
+const jumpBtn = document.getElementById('jump');
+const JOY_R = 50;
+
+function roleFor(t) {
+  const el = t.target;
+  if (el.closest && el.closest('#webL')) return 'webL';
+  if (el.closest && el.closest('#webR')) return 'webR';
+  if (el.closest && el.closest('#jump')) return 'jump';
+  if (el.closest && el.closest('#mouse')) return 'none';
+  if (t.clientX < innerWidth * 0.4 && t.clientY > innerHeight * 0.35) {
+    for (const v of touches.values()) if (v.role === 'joy') return 'cam';
+    return 'joy';
+  }
+  return 'cam';
+}
+addEventListener('touchstart', e => {
+  if (!playing) return;
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    const role = roleFor(t);
+    touches.set(t.identifier, { role, x: t.clientX, y: t.clientY, ox: t.clientX, oy: t.clientY });
+    if (role === 'webL') setWeb('L', true);
+    if (role === 'webR') setWeb('R', true);
+    if (role === 'jump') { input.jumpPressed = true; jumpBtn.classList.add('on'); }
+    if (role === 'joy') {
+      joyBase.style.display = 'block';
+      joyBase.style.left = t.clientX + 'px';
+      joyBase.style.top = t.clientY + 'px';
+      joyKnob.style.transform = 'translate(0,0)';
+    }
+  }
+}, { passive: false });
+addEventListener('touchmove', e => {
+  if (!playing) return;
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    const s = touches.get(t.identifier);
+    if (!s) continue;
+    if (s.role === 'cam') {
+      yaw -= (t.clientX - s.x) * 0.007;
+      pitch = THREE.MathUtils.clamp(pitch + (t.clientY - s.y) * 0.006, -0.35, 1.3);
+    } else if (s.role === 'joy') {
+      let dx = t.clientX - s.ox, dy = t.clientY - s.oy;
+      const l = Math.hypot(dx, dy);
+      if (l > JOY_R) { dx *= JOY_R / l; dy *= JOY_R / l; }
+      joyKnob.style.transform = `translate(${dx}px,${dy}px)`;
+      input.x = dx / JOY_R; input.y = -dy / JOY_R;
+    }
+    s.x = t.clientX; s.y = t.clientY;
+  }
+}, { passive: false });
+function touchEnd(e) {
+  for (const t of e.changedTouches) {
+    const s = touches.get(t.identifier);
+    if (!s) continue;
+    touches.delete(t.identifier);
+    if (s.role === 'webL') setWeb('L', false);
+    if (s.role === 'webR') setWeb('R', false);
+    if (s.role === 'jump') jumpBtn.classList.remove('on');
+    if (s.role === 'joy') { input.x = input.y = 0; joyBase.style.display = 'none'; }
+  }
+}
+addEventListener('touchend', touchEnd);
+addEventListener('touchcancel', touchEnd);
+
+// ------------------------------------------------------------------
+// web logic
+// ------------------------------------------------------------------
+function camBasis() {
+  const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+  const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+  return { fwd, right };
+}
+function handPos(side, out) {
+  const arm = side === 'L' ? armL : armR;
+  return arm.localToWorld(out.set(0, -0.72, 0));
+}
+
+function fireWeb(side) {
+  const w = webs[side];
+  const { fwd, right } = camBasis();
+  const sideSign = side === 'L' ? -1 : 1;
+  // where we'd *like* the web to land: ahead, up and off to one side
+  const target = tmp.copy(pos)
+    .addScaledVector(fwd, 24)
+    .addScaledVector(right, sideSign * 14);
+  target.y += 26;
+
+  let best = null, bestD = Infinity;
+  const p = new THREE.Vector3();
+  for (const b of buildings) {
+    p.set(
+      THREE.MathUtils.clamp(target.x, b.minX, b.maxX),
+      THREE.MathUtils.clamp(target.y, 0, b.top),
+      THREE.MathUtils.clamp(target.z, b.minZ, b.maxZ)
+    );
+    if (p.y < pos.y + 8) continue;                  // must be well above us to be useful
+    const fromPlayer = p.distanceTo(pos);
+    if (fromPlayer > 75 || fromPlayer < 6) continue;
+    const d = p.distanceTo(target);
+    if (d < bestD) { bestD = d; best = p.clone(); }
+  }
+
+  w.t = 0;
+  handPos(side, w.tip);
+  if (best && bestD < 45) {
+    w.state = 'shooting';
+    w.anchor.copy(best);
+  } else {
+    w.state = 'missing';
+    w.anchor.copy(target);
+  }
+  w.line.visible = true;
+}
+
+function releaseWeb(side) {
+  const w = webs[side];
+  if (w.state === 'attached' && !onGround) {
+    const other = webs[side === 'L' ? 'R' : 'L'];
+    if (other.state !== 'attached') {
+      // little fling on release so it feels good
+      vel.multiplyScalar(1.08);
+      vel.y += 6;
+    }
+  }
+  if (w.state !== 'idle') w.state = 'retracting';
+  w.t = 0;
+}
+
+function updateWeb(side, dt) {
+  const w = webs[side];
+  const hand = handPos(side, tmp2);
+  if (w.state === 'idle') { w.line.visible = false; w.blob.visible = false; return; }
+
+  const SHOOT_SPEED = 220;
+  if (w.state === 'shooting' || w.state === 'missing') {
+    const dir = tmp.copy(w.anchor).sub(w.tip);
+    const dist = dir.length();
+    const step = SHOOT_SPEED * dt;
+    if (dist <= step) {
+      w.tip.copy(w.anchor);
+      if (w.state === 'shooting') {
+        w.state = 'attached';
+        w.len = pos.distanceTo(w.anchor);
+        // reel in to a length where the bottom of the swing clears the street
+        w.targetLen = Math.max(5, Math.min(w.len * 0.9, w.anchor.y - 3));
+        // yank toward the anchor so webbing from the ground actually lifts you
+        const pull = tmp.copy(w.anchor).sub(pos).normalize();
+        vel.addScaledVector(pull, 10);
+        if (onGround) { vel.y = Math.max(vel.y, 14); onGround = false; }
+      } else {
+        w.state = 'retracting';
+      }
+    } else {
+      w.tip.addScaledVector(dir, step / dist);
+    }
+  } else if (w.state === 'attached') {
+    w.tip.copy(w.anchor);
+  } else if (w.state === 'retracting') {
+    const dir = tmp.copy(hand).sub(w.tip);
+    const dist = dir.length();
+    const step = SHOOT_SPEED * 1.4 * dt;
+    if (dist <= step) { w.state = 'idle'; w.line.visible = false; w.blob.visible = false; return; }
+    w.tip.addScaledVector(dir, step / dist);
+  }
+
+  const arr = w.line.geometry.attributes.position.array;
+  arr[0] = hand.x; arr[1] = hand.y; arr[2] = hand.z;
+  arr[3] = w.tip.x; arr[4] = w.tip.y; arr[5] = w.tip.z;
+  w.line.geometry.attributes.position.needsUpdate = true;
+  w.line.visible = true;
+  w.blob.visible = w.state === 'attached';
+  w.blob.position.copy(w.tip);
+}
+
+// ------------------------------------------------------------------
+// physics
+// ------------------------------------------------------------------
+const GRAV = 32, PR = 0.45, PH = 1.9;
+
+function collide() {
+  onGround = false;
+  wallNormal = null;
+  if (pos.y <= 0) { pos.y = 0; if (vel.y < 0) vel.y = 0; onGround = true; }
+
+  for (const b of buildings) {
+    if (pos.x + PR <= b.minX || pos.x - PR >= b.maxX) continue;
+    if (pos.z + PR <= b.minZ || pos.z - PR >= b.maxZ) continue;
+    if (pos.y >= b.top || pos.y + PH <= 0) continue;
+
+    const pens = [
+      { d: pos.x + PR - b.minX, ax: 'x', s: -1 },
+      { d: b.maxX - (pos.x - PR), ax: 'x', s: 1 },
+      { d: pos.z + PR - b.minZ, ax: 'z', s: -1 },
+      { d: b.maxZ - (pos.z - PR), ax: 'z', s: 1 },
+      { d: b.top - pos.y, ax: 'y', s: 1 },
+    ];
+    let m = pens[0];
+    for (const p of pens) if (p.d < m.d) m = p;
+
+    if (m.ax === 'y') {
+      pos.y = b.top;
+      if (vel.y < 0) vel.y = 0;
+      onGround = true;
+    } else {
+      pos[m.ax] += m.s * m.d;
+      if (Math.sign(vel[m.ax]) === -m.s) vel[m.ax] = 0;
+      wallNormal = new THREE.Vector3(m.ax === 'x' ? m.s : 0, 0, m.ax === 'z' ? m.s : 0);
+    }
+  }
+  // world border
+  for (const ax of ['x', 'z']) {
+    if (pos[ax] > LIMIT) { pos[ax] = LIMIT; vel[ax] = Math.min(vel[ax], 0); }
+    if (pos[ax] < -LIMIT) { pos[ax] = -LIMIT; vel[ax] = Math.max(vel[ax], 0); }
+  }
+}
+
+function step(dt) {
+  // input -> world direction
+  let ix = input.x, iy = input.y;
+  if (keys.KeyA || keys.ArrowLeft) ix -= 1;
+  if (keys.KeyD || keys.ArrowRight) ix += 1;
+  if (keys.KeyW || keys.ArrowUp) iy += 1;
+  if (keys.KeyS || keys.ArrowDown) iy -= 1;
+  const il = Math.hypot(ix, iy);
+  if (il > 1) { ix /= il; iy /= il; }
+  const { fwd, right } = camBasis();
+  const move = new THREE.Vector3().addScaledVector(fwd, iy).addScaledVector(right, ix);
+  const moving = move.lengthSq() > 0.01;
+
+  const attached = webs.L.state === 'attached' || webs.R.state === 'attached';
+  let climbing = false;
+
+  if (wallNormal && moving && !onGround && move.dot(wallNormal) < -0.4) climbing = true;
+  if (wallNormal && moving && onGround && move.dot(wallNormal) < -0.4) climbing = true;
+
+  if (climbing && !attached) {
+    vel.y = 9 * Math.min(1, move.length());
+    vel.x *= 0.5; vel.z *= 0.5;
+    // keep pressing into the wall so we stay on it
+    vel.addScaledVector(wallNormal, -2);
+  } else if (onGround) {
+    const SPEED = 12;
+    vel.x += (move.x * SPEED - vel.x) * Math.min(1, dt * 10);
+    vel.z += (move.z * SPEED - vel.z) * Math.min(1, dt * 10);
+  } else {
+    // air control (stronger while swinging so you can pump)
+    const a = attached ? 22 : 10;
+    vel.addScaledVector(move, a * dt);
+    vel.y -= GRAV * dt;
+    vel.multiplyScalar(1 - 0.12 * dt);
+  }
+
+  if (input.jumpPressed) {
+    if (onGround) { vel.y = 13; onGround = false; }
+    else if (wallNormal) { vel.addScaledVector(wallNormal, 14); vel.y = 14; }
+  }
+  input.jumpPressed = false;
+
+  // speed cap
+  const sp = vel.length();
+  if (sp > 75) vel.multiplyScalar(75 / sp);
+
+  pos.addScaledVector(vel, dt);
+
+  // rope constraints
+  for (const s of ['L', 'R']) {
+    const w = webs[s];
+    if (w.state !== 'attached') continue;
+    // fast reel to the safe length, then a slow reel for some extra lift
+    if (w.len > w.targetLen) w.len = Math.max(w.targetLen, w.len - 30 * dt);
+    else w.len = Math.max(5, w.len - 2 * dt);
+    const d = tmp.copy(pos).sub(w.anchor);
+    const l = d.length();
+    if (l > w.len) {
+      d.divideScalar(l);
+      pos.copy(w.anchor).addScaledVector(d, w.len);
+      const radial = vel.dot(d);
+      if (radial > 0) vel.addScaledVector(d, -radial);
+    }
+  }
+
+  collide();
+
+  // facing
+  const hv = Math.hypot(vel.x, vel.z);
+  if (hv > 0.5) facing = Math.atan2(vel.x, vel.z);
+  else if (moving) facing = Math.atan2(move.x, move.z);
+  if (climbing) facing = Math.atan2(-wallNormal.x, -wallNormal.z);
+  return { moving, climbing, attached, hv };
+}
+
+// ------------------------------------------------------------------
+// camera
+// ------------------------------------------------------------------
+const camTarget = new THREE.Vector3();
+const camWant = new THREE.Vector3();
+function insideBuilding(p) {
+  if (p.y < 0.3) return true;
+  for (const b of buildings) {
+    if (p.x > b.minX - .3 && p.x < b.maxX + .3 && p.z > b.minZ - .3 && p.z < b.maxZ + .3 && p.y < b.top + .3) return true;
+  }
+  return false;
+}
+function updateCamera(dt) {
+  camTarget.lerp(tmp.copy(pos).setY(pos.y + 1.6), Math.min(1, dt * 12));
+  const dist = 8.5;
+  camWant.set(
+    Math.sin(yaw) * Math.cos(pitch) * dist,
+    Math.sin(pitch) * dist,
+    Math.cos(yaw) * Math.cos(pitch) * dist
+  ).add(camTarget);
+  // pull in if a building is in the way
+  const STEPS = 10;
+  let ok = camTarget.clone();
+  for (let i = 1; i <= STEPS; i++) {
+    const p = tmp2.copy(camTarget).lerp(camWant, i / STEPS);
+    if (insideBuilding(p)) break;
+    ok.copy(p);
+  }
+  camera.position.copy(ok);
+  camera.lookAt(camTarget);
+}
+
+// ------------------------------------------------------------------
+// HUD
+// ------------------------------------------------------------------
+const hud = document.getElementById('hud');
+const msg = document.getElementById('msg');
+let msgTimer = 0;
+function flash(text, secs = 2) {
+  msg.textContent = text; msg.style.opacity = 1; msgTimer = secs;
+}
+
+// ------------------------------------------------------------------
+// loop
+// ------------------------------------------------------------------
+let last = performance.now(), animT = 0, fps = 60, fpsAcc = 0, fpsN = 0, hudT = 0;
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  let dt = (now - last) / 1000;
+  last = now;
+  dt = Math.min(dt, 1 / 20); // avoid tunnelling after tab switches
+
+  fpsAcc += dt; fpsN++;
+  if (fpsAcc > 0.5) { fps = Math.round(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0; }
+
+  let info = { moving: false, climbing: false, attached: false, hv: 0 };
+  if (playing) {
+    // two physics substeps for steadier ropes
+    info = step(dt / 2);
+    info = step(dt / 2);
+  }
+
+  player.position.copy(pos);
+  model.rotation.y = THREE.MathUtils.lerp(model.rotation.y,
+    model.rotation.y + Math.atan2(Math.sin(facing - model.rotation.y), Math.cos(facing - model.rotation.y)),
+    Math.min(1, dt * 12));
+
+  // stiff, cheap animation
+  animT += dt;
+  const walk = onGround && info.hv > 1 ? Math.sin(animT * 12) * Math.min(1, info.hv / 10) * 0.7 : 0;
+  legL.rotation.x = walk; legR.rotation.x = -walk;
+  if (!onGround && !info.climbing) { legL.rotation.x = 0.5; legR.rotation.x = -0.2; }
+  if (info.climbing) {
+    const c = Math.sin(animT * 14) * 0.5;
+    legL.rotation.x = c; legR.rotation.x = -c;
+  }
+  armL.rotation.x = webs.L.state !== 'idle' ? -2.6 : (info.climbing ? -2.4 + Math.sin(animT * 14) * .4 : -walk);
+  armR.rotation.x = webs.R.state !== 'idle' ? -2.6 : (info.climbing ? -2.4 - Math.sin(animT * 14) * .4 : walk);
+  armL.rotation.z = webs.L.state !== 'idle' ? -0.3 : 0;
+  armR.rotation.z = webs.R.state !== 'idle' ? 0.3 : 0;
+  head.rotation.y = Math.sin(animT * 0.7) * 0.1; // idle head wobble
+
+  player.updateMatrixWorld(true);
+  updateWeb('L', dt);
+  updateWeb('R', dt);
+
+  // collectibles
+  for (const c of cubes) {
+    if (!c.visible) continue;
+    c.rotation.y += dt * 2; c.rotation.x += dt;
+    if (c.position.distanceTo(tmp.copy(pos).setY(pos.y + 1)) < 2.4) {
+      c.visible = false;
+      collected++;
+      if (collected === cubes.length) flash('ALL CUBES! you win\n(ending not implemented)', 5);
+      else flash(`cube get! ${collected}/${cubes.length}`);
+    }
+  }
+
+  updateCamera(dt);
+  renderer.render(scene, camera);
+
+  if (msgTimer > 0) { msgTimer -= dt; if (msgTimer <= 0) msg.style.opacity = 0; }
+
+  hudT -= dt;
+  if (hudT <= 0) {
+    hudT = 0.15;
+    const st = info.attached ? 'SWINGING' : info.climbing ? 'climbing' : onGround ? 'grounded' : 'airborne';
+    hud.innerHTML =
+      `<b>SPOODERMAN</b> v0.0.7-prealpha\n` +
+      `cubes: ${collected}/${cubes.length}\n` +
+      `spd: ${vel.length().toFixed(1)}  alt: ${pos.y.toFixed(0)}m\n` +
+      `state: ${st}\n` +
+      `fps: ${fps}  // debug text pls remove`;
+  }
+}
+requestAnimationFrame(frame);
+
+document.getElementById('start').addEventListener('click', () => {
+  document.getElementById('title').style.display = 'none';
+  playing = true;
+  last = performance.now();
+  flash(isTouch ? 'hold the mouse buttons to web swing' : 'hold left / right click to web swing', 3);
+  if (!isTouch) lockPointer();
+});
+</script>
+</body>
+</html>
